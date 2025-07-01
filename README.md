@@ -68,7 +68,7 @@ This OIDC integration allows us to use JF CLI tool in the pipeline without the u
 ## Howto
 - Git clone this project. 
 - Make a dummy change in the first workflow file or in the source code (folder src/); 
-- Commit the and push
+- Commit and push
 - Observe the CI pipeline going into actions.
 
 **Note** We acknowledge real life scenario would benefit a realbranch management and such workflow might be initiated by approved pull requests, on dev branches for example.
