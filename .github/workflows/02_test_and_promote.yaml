@@ -72,14 +72,14 @@ jobs:
 
       - name: Download Docker image from Artifactory
         run: |    
-            jf docker pull "trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:latest" 
-            kind load docker-image "trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:latest"
+            jf docker pull "trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:$tag" 
+            kind load docker-image "trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:$tag"
             
       - name: Deploy Helm chart & Dummy Test
         run: |
           check=""
           helm lint ./helm/helm-petclinic
-          helm install petclinic ./helm/helm-petclinic --set deployment.image=trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:latest
+          helm install petclinic ./helm/helm-petclinic --set deployment.image=trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:$tag
           sleep 30
           check=$(kubectl get pods | grep petclinic | grep '1/1')
 
