@@ -11,7 +11,7 @@ on:
       - 'Dockerfile'
       - 'helm/**'
       - 'src/**'
-      # - '.github/workflows/02_test_and_promote.yaml'
+      - '.github/workflows/02_test_and_promote.yaml'
 
 permissions:
   id-token: write
@@ -82,7 +82,8 @@ jobs:
           check=""
           helm lint ./helm/helm-petclinic
           helm install petclinic ./helm/helm-petclinic --set deployment.image=trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:$tag
-          sleep 30
+          echo "Waiting a bit..."
+          kubectl wait --for=condition=ready pod -l app=petclinic --timeout=120s
           check=$(kubectl get pods | grep petclinic | grep '1/1')
 
           if [ -z "$check" ]; then
@@ -126,5 +127,5 @@ jobs:
             echo "Continuing..."
           fi
 
-          jf rt build-promote "Scan, Build and Publish Jar" ${{ github.sha }} my-repo-libs-release --copy --comment "QA tests passed"
+          jf rt build-promote "Scan, Build and Publish Jar" $vcs my-repo-libs-release --copy --comment "QA tests passed"
           
