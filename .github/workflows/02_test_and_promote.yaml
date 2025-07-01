@@ -81,12 +81,12 @@ jobs:
         run: |
           check=""
           helm lint ./helm/helm-petclinic
-          helm install petclinic ./helm/helm-petclinic --set deployment.image=trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:$tag
+          helm install petclinic ./helm/helm-petclinic --set deployment.image=trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:${{ steps.tag_decision.outputs.tag }}
           echo "Waiting a bit..."
-          # kubectl wait --for=condition=ready pod -l app=petclinic --timeout=120s
+          kubectl wait --for=condition=ready pod -l app=petclinic --timeout=120s
           sleep 60
           kubectl get pods -A
-          # check=$(kubectl get pods | grep petclinic | grep '1/1')
+          check=$(kubectl get pods | grep petclinic | grep '1/1')
 
           if [ -z "$check" ]; then
             echo "petclinic pod is not ready!"
