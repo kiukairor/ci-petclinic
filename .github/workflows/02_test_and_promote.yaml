@@ -1,0 +1,128 @@
+name: Helm Chart and Promote artifacts
+
+on:
+  workflow_run:
+    workflows: ["Download and Containerize"]
+    types:
+      - completed
+  push:
+    branches: [main]
+    paths: 
+      - 'Dockerfile'
+      - 'helm/**'
+      - 'src/**'
+      - '.github/workflows/02_test_and_promote.yaml'
+
+permissions:
+  id-token: write
+
+jobs:
+  deploy-to-kind-k8s:
+    # if: ${{github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Kubernetes tools
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.32.0'
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.14.0'
+
+      - name: Install kind
+        run: |
+          # Should have been proxied through Artifactory maybe
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64 
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Create kind cluster
+        run: |
+          kind create cluster --wait 60s
+          kubectl cluster-info
+
+      - name: Set up JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: https://trial3sr477.jfrog.io
+        with:
+          oidc-provider-name: github-jfrog
+          oidc-audience: my-aud
+          version: 2.75.0
+      
+      - name: Decide wich tag to use
+        run: | 
+            sha256_latest=$(jf rt s my-docker-repo-docker/spring-petclinic/latest/manifest.json | jq -r '.[0].props["sha256"][0]')
+            sha256_commit=$(jf rt s my-docker-repo-docker/spring-petclinic/${{ github.sha }}/manifest.json | jq -r '.[0].props["sha256"][0]')
+            if [[ "$sha256_latest" != "$sha256_commit" ]]; then
+                echo ">>>> WARN: Docker images tags do not match. Pipeline was previously interrupted. Could be Blocked dependind on policies."
+                tag="latest"
+            else
+                echo "Docker image was built by the previous workflow and commit."
+                echo "Hence, the docker image was built  by the current commit. Continuing..."
+                echo "----------------------------------------------------------------------------------------------"
+                tag=${{ github.sha }}
+            fi
+
+      - name: Download Docker image from Artifactory
+        run: |    
+            jf docker pull "trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:latest" 
+            kind load docker-image "trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:latest"
+            
+      - name: Deploy Helm chart & Dummy Test
+        run: |
+          check=""
+          helm lint ./helm/helm-petclinic
+          helm install petclinic ./helm/helm-petclinic --set deployment.image=trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:latest
+          sleep 30
+          check=$(kubectl get pods | grep petclinic | grep '1/1')
+
+          if [ -z "$check" ]; then
+            echo "petclinic pod is not ready!"
+            exit 1
+          else
+            echo "Petclinic pod is ready!"
+            exit 0
+          fi
+
+  promote:
+    runs-on: ubuntu-latest
+    needs: deploy-to-kind-k8s
+
+    steps:
+      - name: Set up JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: https://trial3sr477.jfrog.io
+        with:
+          oidc-provider-name: github-jfrog
+          oidc-audience: my-aud
+          version: 2.75.0
+
+      - name: Promote to release
+        run: | 
+          echo 'The idea is to say everything went well so we promote everything'
+          echo 'For simplicity, we only do it with the jar here.'
+          echo 'This should assume git commit is the same across workflows'
+
+          result=$(jf rt s my-repo-libs-dev-virtual/target/spring-petclinic-3.5.0.jar)
+          name=$(echo "$result" | jq -r '.[0].props["build.name"][0]')
+          vcs=$(echo "$result" | jq -r '.[0].props["vcs.revision"][0]')
+          echo "previous build.name: $name"
+          echo "vcs.revision: $vcs"
+
+          if [[ "$vcs" != "${GITHUB_SHA}" ]]; then
+            echo ">>>> WARN: Jar was not built by the expected commit workflow. Interrupted Pipeline. Could be Blocked depending on policies."
+          else
+            echo "Jar was built by the workflows in the same commit,"
+            echo "Continuing..."
+          fi
+
+          jf rt build-promote "Scan, Build and Publish Jar" ${{ github.sha }} my-repo-libs-release --copy --comment "QA tests passed"
+          

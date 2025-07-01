@@ -1,0 +1,188 @@
+name: Scan, Build and Publish Jar
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pom.xml'
+      - 'src/**'
+      - '.github/workflows/00_scan_build_publish_jar.yaml'
+
+permissions:
+  id-token: write
+  contents: read
+  security-events: write
+
+env:
+  BUILD_NAME: ${{ github.workflow }} 
+  BUILD_NUMBER: ${{ github.sha }}  
+
+jobs:
+  quality-security-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up jf cli (xray scans)
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+            JF_URL: https://trial3sr477.jfrog.io 
+        with:
+            oidc-provider-name: github-jfrog 
+            oidc-audience: my-aud
+            version: 2.75.0
+      
+      # I was not able to leverage jf CLI to use 'jf mvn' here, as I needed to provide some config and I was not sure how to do it in an automated and elegant way.
+      ## Should be studied further to understand how to run maven commands in the CI pipeline reyling on jf cli.     
+      - name: Generate settings.xml dynamically
+        run: |
+          mkdir -p ~/.m2
+          envsubst < .github/param-settings.xml > ~/.m2/settings.xml
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_PASSWORD }}
+
+      # Non-blocking quality checks.
+      ## checkstyle is about code quality.
+      ## checkstyle:check could make it blocking.
+      # - name: Code Quality Checks 1
+      #   run: ./mvnw checkstyle:checkstyle
+      ## Spotbugs is a static code analysis tool that looks for bugs in Java programs.
+      - name: Code Quality checks 2
+        run: ./mvnw spotbugs:check
+
+      # Security Checks -- Failing if too many High vulnerabilities
+      ## Note that jfrog watches can do similar things with better control but need the artifacts to be uploaded. If failing defined policies, these artifacts can then be quarantined (See Next step of the workflow).
+      ## Here the idea is to avoid building the jar if we detect too many vulnerabilities right away.
+      
+      - name: Initial security checks
+        run: |
+          echo "|> Counting vulnerabilities before building and abort if too many... "
+          jf audit  --format table --min-severity Medium > table.txt 
+          vuln=$(cat table.txt | grep -E 'High|Critical' | tr -d ' ' |wc -l)        
+
+          if [ "$vuln" -gt 10 ]; then
+            echo "Static analysis found too many High/Critical vulnerabilities($vuln vulnerabilities)"
+            echo "Aborting build workflow..."
+            exit 1
+          fi
+          echo "Static analysis found $vuln High/Critical vulnerabilities. Proceeding with maven build."               
+
+  maven-build-snapshot: 
+    needs: quality-security-gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+
+      # Same reason as previous step.
+      - name: Generate settings.xml dynamically
+        run: |
+          mkdir -p ~/.m2
+          envsubst < .github/param-settings.xml > ~/.m2/settings.xml
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_PASSWORD }}
+
+      
+      - name: Clean project
+        run: ./mvnw clean
+
+      # More quality checks are includeded here. 
+      # As part of maven lifecycle, more checks will be run up to verify (unit test, integarion tests, and some jacoco tests as defined in pom.xml).
+      - name: Verify (validate, compile, test, package, verify)
+        run: ./mvnw verify
+
+      - name: Set up JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: https://trial3sr477.jfrog.io
+        with:
+          oidc-provider-name: github-jfrog
+          oidc-audience: my-aud
+      
+      - name: Collect environment and git info
+        run: |
+          jf rt build-collect-env "$BUILD_NAME" "$BUILD_NUMBER"
+          jf rt build-add-git "$BUILD_NAME" "$BUILD_NUMBER"
+
+      - name: Upload jar snapshot to Artifactory  
+        run: jf rt upload --url="$JF_URL" "target/*.jar" "my-repo-libs-snapshot/" --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER"
+
+      - name: Publish build info
+        run: |
+          jf rt build-publish "$BUILD_NAME" "$BUILD_NUMBER"
+          # Wait for the build info to be indexed by JFrog XRay
+          sleep 60
+          jf build-scan --fail --vuln "$BUILD_NAME" "$BUILD_NUMBER"
+# In real life scenario, we would use maven lifecycle (maven release) to go from SNAPSHOT to non SNAPSHOT and this would bump the POM; for simplicity we have performed a manual 'release' here.      
+  maven-build-dev: 
+    needs: maven-build-snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - name: Purpose
+        run: |
+          echo "Static quality and security inital tests passed"
+          echo "Integration Tests passed"
+          echo "We will drop the SNAPSHOT and make it a dev release"
+
+      - uses: actions/checkout@v4
+      
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+
+      - name: Generate settings.xml dynamically
+        run: |
+          mkdir -p ~/.m2
+          envsubst < .github/param-settings.xml > ~/.m2/settings.xml
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_PASSWORD }}    
+
+      - name: Manual maven release and upload to dev repo. 
+        run: |
+          echo ">>>> WARN: This is not a real life scenario but this choice was made for simplicity reasons."
+          ./mvnw clean package
+          VERSION=$(grep -m 1 '<version>' pom.xml | sed -E 's/.*<version>(.*)<\/version>.*/\1/')
+          echo $VERSION
+          ./mvnw versions:set -DnewVersion=$VERSION
+          ./mvnw clean package
+
+      - name: Set up JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: https://trial3sr477.jfrog.io
+        with:
+          oidc-provider-name: github-jfrog
+          oidc-audience: my-aud
+
+      - name: Upload to Artifactory  
+        run: jf rt upload --url="$JF_URL" "target/spring-petclinic-3.5.0.jar" "my-repo-libs-dev-virtual" --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER"
+
+      # Need to publish build info so artifactory-build-info repo knows about this new build.
+      - name: Publish build info for dev jar
+        run: |
+          jf rt build-collect-env "$BUILD_NAME" "$BUILD_NUMBER"
+          jf rt build-add-git "$BUILD_NAME" "$BUILD_NUMBER"
+          jf rt build-publish "$BUILD_NAME" "$BUILD_NUMBER"
+

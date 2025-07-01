@@ -1,0 +1,15 @@
+label: petclinic
+
+deployment:
+  namespace: default
+  name: petclinic-deployment
+  containername: petclinic-container
+  image: "" 
+  replicas: 1
+  
+service:
+  name: petclinic-svc
+  type: ClusterIP
+  # nodePort: 32182 
+  port: 8080
+  targetPort: 8080

@@ -1,0 +1,67 @@
+name: Download and Containerize
+
+on:
+  workflow_run:
+    workflows: ["Scan, Build and Publish Jar"]
+    types:
+      - completed
+  push:
+    branches: [main]
+    paths: 
+      - 'Dockerfile'
+      - 'src/**'
+      # - '.github/workflows/01_download_containerize.yaml'
+
+permissions:
+  id-token: write
+
+jobs:
+  download-from-artifactory:
+    #  if: ${{github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up  Artifactory
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: https://trial3sr477.jfrog.io
+        with:
+          oidc-provider-name: github-jfrog
+          oidc-audience: my-aud
+          version: 2.75.0
+  
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      ## TODO: change to fetch jar from dev repo  
+      # Note that if one enable policy watch with a security policy that gets violated, we can block downloads
+      - name: Check jar origin and Download JAR from Artifactory
+        run: |
+          result=$(jf rt s my-repo-libs-dev-virtual/target/spring-petclinic-3.5.0.jar)
+          name=$(echo "$result" | jq -r '.[0].props["build.name"][0]')
+          vcs=$(echo "$result" | jq -r '.[0].props["vcs.revision"][0]')
+          echo "previous build.name: $name"
+          echo "vcs.revision: $vcs"
+
+          if [[ "$name" != "Scan, Build and Publish Jar" || "$vcs" != "${GITHUB_SHA}" ]]; then
+            echo ">>>> WARN: Jar was not built by previous workflow. Interrupted Pipeline. Could be Blocked dependind on policies."
+          else
+            echo "Jar was built by the expected previous workflow,"
+            echo "Hence, the Jar was triggered by the current commit. Continuing..."
+          fi
+
+          jf rt dl my-repo-libs-dev-virtual/target/spring-petclinic-3.5.0.jar
+
+      - name: Build docker image
+        run: |
+          jf docker build -t trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:${{ github.sha }} .
+          jf docker scan trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:${{ github.sha }} --fail-on-critical=true  
+
+      - name: Upload docker image to Artifactory
+        run: |
+          jf rt build-collect-env "${{ github.workflow }}" "${{ github.sha }}"
+          jf rt build-add-git "${{ github.workflow }}" "${{ github.sha }}"
+          jf rt docker-push trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:${{ github.sha }} my-docker-repo-docker
+          jf rt build-publish "${{ github.workflow }}" "${{ github.sha }}" 
+          jf bs --fail "${{ github.workflow }}" "${{ github.sha }}"
+          jf docker tag trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:${{ github.sha }} trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:latest
+          jf rt docker-push trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:latest my-docker-repo-docker
