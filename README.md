@@ -3,7 +3,7 @@ Based on the topic, we focused on the Continuous Integration side of things.
 We relied on https://github.com/spring-projects/spring-petclinic, removed the gradle settings and treated the underlying maven project as the main starting point of our pipeline.
 Hence, folder src/ has been left unmodified.
 
-Branch Management and Continous Deployment are considered out of scope.
+We have considered branch management and Continous Deployment slightly out of scope.
 We made the (somewhat arbitrary) choice to disregard GitHub branch management. As an easy shortcut to enable minimal branch protection, we could have enabled branch protection to prevent pushing directly to the main branch and go through Pull requests. But we kept disabled to trigger the CI pipeline more easily.
 
 This has lead to a few unnatural choices in the pipeline design, that are explained inline (e.g. maven release in *00_scan_build_publish.yaml*)

@@ -57,6 +57,7 @@ jobs:
           version: 2.75.0
       
       - name: Decide wich tag to use
+        id: tag_decision
         run: | 
             sha256_latest=$(jf rt s my-docker-repo-docker/spring-petclinic/latest/manifest.json | jq -r '.[0].props["sha256"][0]')
             sha256_commit=$(jf rt s my-docker-repo-docker/spring-petclinic/${{ github.sha }}/manifest.json | jq -r '.[0].props["sha256"][0]')
@@ -69,11 +70,12 @@ jobs:
                 echo "----------------------------------------------------------------------------------------------"
                 tag=${{ github.sha }}
             fi
+            echo "tag=$tag" >> $GITHUB_OUTPUT
 
       - name: Download Docker image from Artifactory
         run: |    
-            jf docker pull "trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:$tag" 
-            kind load docker-image "trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:$tag"
+            jf docker pull "trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:${{ steps.tag_decision.outputs.tag }}" 
+            kind load docker-image "trial3sr477.jfrog.io/my-docker-repo-docker/spring-petclinic:${{ steps.tag_decision.outputs.tag }}"
             
       - name: Deploy Helm chart & Dummy Test
         run: |
