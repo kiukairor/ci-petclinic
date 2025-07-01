@@ -1,6 +1,7 @@
 name: Download and Containerize
 
 on:
+  workflow_dispatch:
   workflow_run:
     workflows: ["Scan, Build and Publish Jar"]
     types:

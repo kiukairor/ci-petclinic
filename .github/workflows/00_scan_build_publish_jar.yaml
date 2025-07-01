@@ -1,6 +1,7 @@
 name: Scan, Build and Publish Jar
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
