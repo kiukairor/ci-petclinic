@@ -39,7 +39,10 @@ It allows to quarantine vulnerables artifacts. As an illustration, we have made 
 ## What is missing, what to improve.
 
 We did not introduce branch management and advanced logic around it so the corresponding logic for different repos and environments might be missing at the Artifactory level.
-Dockerfile and Helm charts are quite minimal and did not undergo advanced security consideration. Similarly the docker image was not layered and should then be bigger than what it could be...
+Dockerfile and Helm charts are quite minimal and did not undergo optimsation and advanced security consideration:
+ - The docker image was not layered and appears to be quite big
+ - The helm chart is not ready for production deployment (only one replica, no security context), it is mainly there to prove the container image can be deployed into a cluster
+ 
 Above all, we have not introduced signatures of the different artifacts within the pipeline to ensure integrity **and** authenticity of the binaries.
 Note that when downloading artifacts, Artifactory is meant to verify integrity (and security watches) before giving access to the requested binaries.
 

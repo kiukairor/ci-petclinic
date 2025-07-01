@@ -11,7 +11,7 @@ on:
       - 'Dockerfile'
       - 'helm/**'
       - 'src/**'
-      - '.github/workflows/02_test_and_promote.yaml'
+      # - '.github/workflows/02_test_and_promote.yaml'
 
 permissions:
   id-token: write
